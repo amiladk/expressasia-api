@@ -260,6 +260,134 @@ class ApiController extends DataController
     }
 
 
+    /*
+    |--------------------------------------------------------------------------
+    |Public function / Get Package List 
+    |--------------------------------------------------------------------------
+    */
+    public function getPackageList(Request $request){
+
+        try {
+
+            $client = Client::where('api_key',$request->api_key)->first();
+
+            if($client){
+                $request->merge(['api_key' => $client->api_key]);
+            }else{
+                $request->merge(['api_key' => NULL]);
+            }
+
+            $validation_array = [
+                'api_key'          => 'required',
+                'from_date'        => 'nullable|date',
+                'to_date'          => 'nullable|date|after_or_equal:from_date',
+                'status'           => 'nullable|array',
+                'status.*'         => 'nullable|integer|exists:status,id',
+                'page'             => 'nullable|integer|min:1',
+                'per_page'         => 'nullable|integer|min:1|max:100'
+            ];
+
+            $customMessages = [
+                'api_key.required'       => 'unauthorized access, invalid api key',
+                'to_date.after_or_equal' => 'To date must be after or equal to from date',
+                'status.*.exists'        => 'Invalid status provided'
+            ];
+
+            $validator = Validator::make($request->all(), $validation_array, $customMessages);
+            
+            if($validator->fails()){
+                return response(['success' => false,'data'=> null,'message' => implode(" / ",$validator->messages()->all())], 200);  
+            }
+
+            $query = Package::with('Status','City','Client','packageType')
+                           ->where('client', $client->id);
+
+            // Apply date filters
+            if($request->filled('from_date')){
+                $query->whereDate('created_at', '>=', $request->from_date);
+            }
+
+            if($request->filled('to_date')){
+                $query->whereDate('created_at', '<=', $request->to_date);
+            }
+
+            // Apply status filters
+            if($request->filled('status')){
+                $query->whereIn('status', $request->status);
+            }
+
+            // Pagination
+            $perPage = $request->get('per_page', 20);
+            $packages = $query->orderBy('created_at', 'desc')->paginate($perPage);
+
+            if($packages->count() > 0){
+
+                $data = [];
+                foreach($packages as $package){
+                    $data[] = array(
+                        'id'                   => $package->id,
+                        'waybill'              => $package->waybill,
+                        'status'               => $package->Status->title,
+                        'status_id'            => $package->status,
+                        'city'                 => $package->City->city,
+                        'client_ref'           => $package->client_ref,
+                        'recipient'            => $package->recipient,
+                        'address'              => $package->address,
+                        'cod'                  => $package->cod,
+                        'delivery_charge'      => $package->delivery_charge,
+                        'cash_handling_fee'    => $package->cash_handling_fee,
+                        'amount_paid'          => $package->amount_paid,
+                        'client_remarks'       => $package->client_remarks,
+                        'courier_remarks'      => $package->courier_remarks,
+                        'weight'               => $package->weight,
+                        'attempts'             => $package->attempts,
+                        'item_description'     => $package->item_description,
+                        'received_date'        => $package->received_date,
+                        'created_at'           => $package->created_at,
+                        'package_type'         => $package->packageType->package_type,
+                        'last_attempted_date'  => $package->last_attempted_date,
+                    );
+                }
+
+                $response = array(
+                    'packages'        => $data,
+                    'pagination'      => array(
+                        'current_page'   => $packages->currentPage(),
+                        'total_pages'    => $packages->lastPage(),
+                        'per_page'       => $packages->perPage(),
+                        'total_items'    => $packages->total(),
+                        'from'           => $packages->firstItem(),
+                        'to'             => $packages->lastItem()
+                    )
+                );
+
+                return response(['success' => true,'data'=> $response,'message' => 'Package list retrieved successfully!'], 200);
+            }
+            else{
+                $response = array(
+                    'packages'        => [],
+                    'pagination'      => array(
+                        'current_page'   => 1,
+                        'total_pages'    => 0,
+                        'per_page'       => $perPage,
+                        'total_items'    => 0,
+                        'from'           => null,
+                        'to'             => null
+                    )
+                );
+                return response(['success' => true,'data'=> $response,'message' => 'No packages found!'], 200);
+            }
+        }
+        catch (\Throwable $e){
+            DB::rollback();
+            $this->sendErrorEmail($line_number=$e->getLine(),$function=__FUNCTION__,$error_message=$e->getMessage(),$client->id,$client->name);
+            return response(['success' => false,
+                             'data'    => null,
+                             'message' => 'Oops! Something went wrong please try again later'], 200);
+        }
+    }
+
+
 
 
 /*...............................................................................................................................................
@@ -327,22 +455,22 @@ class ApiController extends DataController
     */
     private function sendErrorEmail($line_number,$function,$error_message,$client_id,$client_name){
 
-        $name   = $client_name;
-        $id     = $client_id;
+        // $name   = $client_name;
+        // $id     = $client_id;
        
-        Mail::send('system_error_email',
-        array(
-            'client'            => $name,
-            'client_id'         => $id,
-            'function'          => $function,
-            'line_number'       => $line_number,
-            'messages'          => $error_message,
-        ), function($message) use ($function)
-          {
-             $message->from('info@ceylonex.lk');
-             $message->to('help@xypherlabs.com');
-             $message->subject('ceylonex.lk - API - System Error - '.$function);
-          });
+        // Mail::send('system_error_email',
+        // array(
+        //     'client'            => $name,
+        //     'client_id'         => $id,
+        //     'function'          => $function,
+        //     'line_number'       => $line_number,
+        //     'messages'          => $error_message,
+        // ), function($message) use ($function)
+        //   {
+        //      $message->from('info@ceylonex.lk');
+        //      $message->to('help@xypherlabs.com');
+        //      $message->subject('ceylonex.lk - API - System Error - '.$function);
+        //   });
 
         return;
     }

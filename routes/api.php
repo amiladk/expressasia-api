@@ -69,6 +69,9 @@ Route::group([
     /****************************************************************************************/
     Route::post('/get-package-return-recieved'     , 'ApiController@returnRecieved');
 
+
+    Route::get('/get-package-list'     , 'ApiController@getPackageList');
+
     
 });
 
