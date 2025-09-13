@@ -54,6 +54,17 @@ Route::group([
     /****************************************************************************************/
     Route::get('/get-package'     , 'ApiController@getPackge');
 
+    
+    /****************************************************************************************
+    *  Public Package Tracking - No API key required.
+    *
+    *  Required param - waybill
+    *                 - phone (10 digits starting with 0)
+    *
+    *  Usage  - Used for public package tracking from expressasia.lk website
+    /****************************************************************************************/
+    Route::get('/track-package', 'ApiController@getPackagePublic');
+
 
 
     /****************************************************************************************

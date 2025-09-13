@@ -192,6 +192,91 @@ class ApiController extends DataController
         }
     }
 
+    /*
+    |--------------------------------------------------------------------------
+    |Public function / Get Package for Public Tracking
+    |--------------------------------------------------------------------------
+    */
+    public function getPackagePublic(Request $request){
+
+        try {
+            $validation_array = [
+                'waybill'          => 'required',
+                'phone'            => 'required|digits:10|starts_with:0',
+            ];
+
+            $customMessages = [
+                'phone.digits'      => 'Phone number must be exactly 10 digits',
+                'phone.starts_with' => 'Phone number must start with 0',
+                'waybill.required'  => 'Waybill number is required',
+                'phone.required'    => 'Phone number is required'
+            ];
+
+            $validator = Validator::make($request->all(), $validation_array, $customMessages);
+            
+            if($validator->fails()){
+                return response(['success' => false,'data'=> null,'message' => implode(" / ",$validator->messages()->all())], 200);  
+            }
+
+            // Find package by waybill first
+            $package = Package::with('Status','City','Client','packageType')->where('waybill',$request->waybill)->first();
+
+            if(!$package){
+                return response(['success' => false,'data'=> null,'message' => 'Package Not Found!'], 200);
+            }
+
+            // Check if the provided phone number matches any of the package's phone numbers
+            $phoneExists = PackagePhone::where('package', $package->id)
+                                    ->where('phone', $request->phone)
+                                    ->exists();
+
+            if(!$phoneExists){
+                return response(['success' => false,'data'=> null,'message' => 'Invalid phone number for this package!'], 200);
+            }
+
+            // Return package details (same as the original getPackge method but without client-specific info)
+            $data = array(
+                'waybill'            => $package->waybill,
+                'status'             => $package->Status->title,
+                'city'               => $package->City->city,
+                'client_ref'         => $package->client_ref,
+                'recipient'          => $package->recipient,
+                'address'            => $package->address,
+                'cod'                => $package->cod,
+                'delivery_charge'    => $package->delivery_charge,
+                'cash_handling_fee'  => $package->cash_handling_fee,
+                'client_remarks'     => $package->client_remarks,
+                'courier_remarks'    => $package->courier_remarks,
+                'weight'             => $package->weight,
+                'attempts'           => $package->attempts,
+                'item_description'   => $package->item_description,
+                'received_date'      => $package->received_date,
+                'created_at'         => $package->created_at,
+                'package_type'       => $package->packageType->package_type,
+                'last_attempted_date'=> $package->last_attempted_date,
+            ); 
+            
+            // Get package history
+            $data['package_history'] = PackageHistory::select('date','remark')->where('package',$package->id)->get();
+
+            return response(['success' => true,'data'=> $data,'message' => 'Package Found Successfully!'], 200);
+        }
+        catch (\Throwable $e){
+            // For public endpoint, we don't have client info for error email, so we'll log differently
+            // You might want to log this error to your application logs instead
+            \Log::error('Public Package Tracking Error: ' . $e->getMessage(), [
+                'line' => $e->getLine(),
+                'function' => __FUNCTION__,
+                'waybill' => $request->waybill ?? 'N/A',
+                'phone' => $request->phone ?? 'N/A'
+            ]);
+            
+            return response(['success' => false,
+                            'data'    => null,
+                            'message' => 'Oops! Something went wrong please try again later'], 200);
+        }
+    }
+
 
 
     /*
