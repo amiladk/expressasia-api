@@ -18,6 +18,7 @@ use App\Models\PackageType;
 use App\Models\PackagePhone;
 use App\Models\PackageHistory;
 use App\Models\DifferentPickupAddress;
+use App\Models\ClientPricing;
 
 class ApiController extends DataController
 {
@@ -63,7 +64,7 @@ class ApiController extends DataController
                 'cod'              => 'required|numeric',
                 'package_type'     => 'required',
                 'client_remarks'   => 'nullable',
-                'weight'           => 'required|numeric|not_in:0',
+                // 'weight'           => 'required|numeric|not_in:0',
                 'item_description' => 'nullable',
                 'phone.*'          => 'nullable|digits:10|starts_with:0',
                 'phone.0'          => 'digits:10|starts_with:0|required',
@@ -84,11 +85,22 @@ class ApiController extends DataController
 
             DB::beginTransaction();
 
+            // $package = Package::create(array_merge(
+            //     $validator->validated(),           
+            //     ['status' => 1,
+            //     'client' => $client->id]           
+            // )); 
+
+            $initialDeliveryCharge = $this->getInitialDeliveryCharge($client->id,$city->shipping_zone,1);
+            //return  $initialDeliveryCharge;
             $package = Package::create(array_merge(
-                $validator->validated(),           
+                $validator->validated(),
                 ['status' => 1,
-                'client' => $client->id]           
-            )); 
+                'client' => $client->id,
+                'delivery_charge'=> $initialDeliveryCharge],
+                ['weight' => 1],
+                ['cod' => $request->package_type == 3 ? $initialDeliveryCharge :  ($request->package_type == 2 ? 0 : $request->cod)]
+            ));
 
             $valid = $validator->valid();
 
@@ -109,10 +121,10 @@ class ApiController extends DataController
         }
         catch (\Throwable $e){
             DB::rollback();
-            $this->sendErrorEmail($line_number=$e->getLine(),$function=__FUNCTION__,$error_message=$e->getMessage(),$client->id,$client->name);
+            // $this->sendErrorEmail($line_number=$e->getLine(),$function=__FUNCTION__,$error_message=$e->getMessage(),$client->id,$client->name);
             return response(['success' => false,
                              'data'    => null,
-                             'message' => 'Oops! Something went wrong please try again later'], 200);
+                             'message' => 'Oops! Something went wrong please try again later'.$e->getMessage()], 200);
         }
     }
 
@@ -571,6 +583,23 @@ class ApiController extends DataController
         $client = Client::find($client_id);
         return $client;
 
+    }
+
+     /*
+    |--------------------------------------------------------------------------
+    | Private Function / Get initial delivery charge
+    |--------------------------------------------------------------------------
+    */
+    private function getInitialDeliveryCharge($client,$shipping_zone,$weight){
+        //return $shipping_zone.'='.$client;
+
+        $data = ClientPricing::where('client',$client)->where('shipping_zone',$shipping_zone)->first();
+
+        $kg = ceil($weight/ 1);
+
+        $delivery_charge_for_additional_kg = $data->delivery_charge_for_additional_kg * ($kg-1);
+        $delivery_charge = $data->delivery_charge +  $delivery_charge_for_additional_kg;
+        return  $delivery_charge;
     }
 
 

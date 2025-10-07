@@ -17,6 +17,7 @@ class ClientSettlementBatch extends Model
      */
     protected $fillable = [
        'id',
+       'search_code',
        'created_date',
        'item_count',
        'cod',
