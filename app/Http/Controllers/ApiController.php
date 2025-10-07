@@ -19,6 +19,8 @@ use App\Models\PackagePhone;
 use App\Models\PackageHistory;
 use App\Models\DifferentPickupAddress;
 use App\Models\ClientPricing;
+use App\Models\ClientSettlementBatch;
+use App\Models\ClientSettlementItem;
 
 class ApiController extends DataController
 {
@@ -481,6 +483,206 @@ class ApiController extends DataController
             return response(['success' => false,
                              'data'    => null,
                              'message' => 'Oops! Something went wrong please try again later'], 200);
+        }
+    }
+
+    
+    /*
+    |--------------------------------------------------------------------------
+    | Public function / Get Client Settlement Batches
+    |--------------------------------------------------------------------------
+    */
+    public function getClientSettlementBatches(Request $request){
+
+        try {
+
+            $client = Client::where('api_key',$request->api_key)->first();
+
+            if($client){
+                $request->merge(['api_key' => $client->api_key]);
+            }else{
+                $request->merge(['api_key' => NULL]);
+            }
+
+            $validation_array = [
+                'api_key'          => 'required',
+                'from_date'        => 'nullable|date',
+                'to_date'          => 'nullable|date|after_or_equal:from_date',
+                'page'             => 'nullable|integer|min:1',
+                'per_page'         => 'nullable|integer|min:1|max:100'
+            ];
+
+            $customMessages = [
+                'api_key.required'       => 'unauthorized access, invalid api key',
+                'to_date.after_or_equal' => 'To date must be after or equal to from date'
+            ];
+
+            $validator = Validator::make($request->all(), $validation_array, $customMessages);
+            
+            if($validator->fails()){
+                return response(['success' => false,'data'=> null,'message' => implode(" / ",$validator->messages()->all())], 200);  
+            }
+
+            $query = ClientSettlementBatch::with('Client', 'User')
+                        ->where('client', $client->id);
+
+            // Apply date filters
+            if($request->filled('from_date')){
+                $query->whereDate('created_date', '>=', $request->from_date);
+            }
+
+            if($request->filled('to_date')){
+                $query->whereDate('created_date', '<=', $request->to_date);
+            }
+
+            // Pagination
+            $perPage = $request->get('per_page', 20);
+            $batches = $query->orderBy('created_date', 'desc')->paginate($perPage);
+
+            if($batches->count() > 0){
+
+                $data = [];
+                foreach($batches as $batch){
+                    $data[] = array(
+                        'id'                   => $batch->id,
+                        'search_code'          => $batch->search_code,
+                        'created_date'         => $batch->created_date,
+                        'item_count'           => $batch->item_count,
+                        'cod'                  => $batch->cod,
+                        'delivery_charge'      => $batch->delivery_charge,
+                        'cash_handling_fee'    => $batch->cash_handling_free,
+                        'amount_payable'       => $batch->amount_payble,
+                        'created_by'           => $batch->User ? $batch->User->name : null,
+                    );
+                }
+
+                $response = array(
+                    'settlement_batches' => $data,
+                    'pagination'         => array(
+                        'current_page'   => $batches->currentPage(),
+                        'total_pages'    => $batches->lastPage(),
+                        'per_page'       => $batches->perPage(),
+                        'total_items'    => $batches->total(),
+                        'from'           => $batches->firstItem(),
+                        'to'             => $batches->lastItem()
+                    )
+                );
+
+                return response(['success' => true,'data'=> $response,'message' => 'Client invoices retrieved successfully!'], 200);
+            }
+            else{
+                $response = array(
+                    'settlement_batches' => [],
+                    'pagination'         => array(
+                        'current_page'   => 1,
+                        'total_pages'    => 0,
+                        'per_page'       => $perPage,
+                        'total_items'    => 0,
+                        'from'           => null,
+                        'to'             => null
+                    )
+                );
+                return response(['success' => true,'data'=> $response,'message' => 'No invoices batches found!'], 200);
+            }
+        }
+        catch (\Throwable $e){
+            DB::rollback();
+            $this->sendErrorEmail($line_number=$e->getLine(),$function=__FUNCTION__,$error_message=$e->getMessage(),$client->id,$client->name);
+            return response(['success' => false,
+                            'data'    => null,
+                            'message' => 'Oops! Something went wrong please try again later'], 200);
+        }
+    }
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | Public function / Get Client Settlement Batch Items
+    |--------------------------------------------------------------------------
+    */
+    public function getClientSettlementBatchItems(Request $request){
+
+        try {
+
+            $client = Client::where('api_key',$request->api_key)->first();
+
+            if($client){
+                $request->merge(['api_key' => $client->api_key]);
+            }else{
+                $request->merge(['api_key' => NULL]);
+            }
+
+            $validation_array = [
+                'api_key'          => 'required',
+                'search_code'      => 'required'
+            ];
+
+            $customMessages = [
+                'api_key.required'      => 'unauthorized access, invalid api key',
+                'search_code.required'  => 'search code is required'
+            ];
+
+            $validator = Validator::make($request->all(), $validation_array, $customMessages);
+            
+            if($validator->fails()){
+                return response(['success' => false,'data'=> null,'message' => implode(" / ",$validator->messages()->all())], 200);  
+            }
+
+            // Find the settlement batch
+            $batch = ClientSettlementBatch::where('search_code', $request->search_code)
+                                        ->where('client', $client->id)
+                                        ->first();
+
+            if(!$batch){
+                return response(['success' => false,'data'=> null,'message' => 'Client invoice not found!'], 200);
+            }
+
+            // Get settlement items with package details
+            $items = ClientSettlementItem::with(['Package' => function($query) {
+                        $query->select('id', 'waybill', 'client_ref');
+                    }])
+                    ->where('client_settlement_batch', $batch->id)
+                    ->get();
+
+            if($items->count() > 0){
+
+                $data = [];
+                foreach($items as $item){
+                    $data[] = array(
+                        'waybill'              => $item->Package ? $item->Package->waybill : null,
+                        'client_ref'           => $item->Package ? $item->Package->client_ref : null,
+                        'cod'                  => $item->cod,
+                        'delivery_charge'      => $item->delivery_charge,
+                        'cash_handling_fee'    => $item->cash_handling_fee,
+                        'amount_payable'       => $item->amount_payable
+                    );
+                }
+
+                $response = array(
+                    'batch_info' => array(
+                        'search_code'       => $batch->search_code,
+                        'created_date'      => $batch->created_date,
+                        'item_count'        => $batch->item_count,
+                        'total_cod'         => $batch->cod,
+                        'total_delivery_charge' => $batch->delivery_charge,
+                        'total_cash_handling_fee' => $batch->cash_handling_free,
+                        'total_amount_payable' => $batch->amount_payble
+                    ),
+                    'items' => $data
+                );
+
+                return response(['success' => true,'data'=> $response,'message' => 'Client invoice items retrieved successfully!'], 200);
+            }
+            else{
+                return response(['success' => false,'data'=> null,'message' => 'No items found in this client invoice!'], 200);
+            }
+        }
+        catch (\Throwable $e){
+            DB::rollback();
+            $this->sendErrorEmail($line_number=$e->getLine(),$function=__FUNCTION__,$error_message=$e->getMessage(),$client->id,$client->name);
+            return response(['success' => false,
+                            'data'    => null,
+                            'message' => 'Oops! Something went wrong please try again later'], 200);
         }
     }
 

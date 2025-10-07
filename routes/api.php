@@ -83,6 +83,32 @@ Route::group([
 
     Route::get('/get-package-list'     , 'ApiController@getPackageList');
 
+    /****************************************************************************************
+    *  Get Client Settlement Batches
+    *
+    *  Required param - api_key
+    *
+    *  Optional param :
+    *          - from_date    : Filter by start date (YYYY-MM-DD)
+    *          - to_date      : Filter by end date (YYYY-MM-DD)
+    *          - page         : Page number for pagination
+    *          - per_page     : Items per page (max 100, default 20)
+    *
+    *  Usage - Retrieve paginated list of settlement batches for the client
+    /****************************************************************************************/
+    Route::get('/get-client-invoices', 'ApiController@getClientSettlementBatches');
+
+
+    /****************************************************************************************
+    *  Get Client Settlement Batch Items
+    *
+    *  Required param - api_key
+    *                 - search_code
+    *
+    *  Usage - Retrieve detailed items of a specific settlement batch
+    /****************************************************************************************/
+    Route::get('/get-client-invoice-items', 'ApiController@getClientSettlementBatchItems');
+
     
 });
 
