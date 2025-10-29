@@ -42,6 +42,16 @@ class ApiController extends DataController
                 $request->merge(['api_key' => NULL]);
             }
 
+            if($client->auto_waybill==1){
+                $waybill = $this->generateWaybill($client);
+                if(!$waybill){
+                    $response = array('success'=>false, 'msg'=>'Waybill range exceeded');
+                    return response()->json($response);
+                }
+
+                $request->merge(['waybill' => $waybill]);
+            }
+
             $city = City::has('BranchCoverage')->where('city',$request->city)->first();
             if($city){
                 $request->merge(['city' => $city->id]);
@@ -87,11 +97,9 @@ class ApiController extends DataController
 
             DB::beginTransaction();
 
-            // $package = Package::create(array_merge(
-            //     $validator->validated(),           
-            //     ['status' => 1,
-            //     'client' => $client->id]           
-            // )); 
+            if($client->auto_waybill==1){
+                $this->updateStartingWaybill($client);
+            }
 
             $initialDeliveryCharge = $this->getInitialDeliveryCharge($client->id,$city->shipping_zone,1);
             //return  $initialDeliveryCharge;
@@ -114,6 +122,7 @@ class ApiController extends DataController
             if($package){
                 $response     = array(
                     'id'      => $package->id,
+                    'waybill' => $package->waybill
                 ); 
                 return response(['success' => true,'data'=> $response,'message' => 'Package Created Successfully!'], 200);
             }
@@ -805,7 +814,36 @@ class ApiController extends DataController
     }
 
 
+    /*
+    |--------------------------------------------------------------------------
+    |Private function / Generate Waybill
+    |--------------------------------------------------------------------------
+    */
+    private function generateWaybill($client){
+        $waybill_prefix   = $client->waybill_prefix;
+        $starting_waybill = $client->starting_waybill;
+        $ending_waybill   = $client->ending_waybill;
 
+        if($starting_waybill>$ending_waybill){
+            return false;
+        }
+
+        $formatednumber = sprintf('%06d', $starting_waybill);
+        $waybill = $waybill_prefix.$formatednumber;
+        //$client->increment('starting_waybill');
+
+        return $waybill;
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    |Private function / update Starting Waybill
+    |--------------------------------------------------------------------------
+    */
+    private function updateStartingWaybill($client){
+        $client->increment('starting_waybill');
+        return true;
+    }
 
 
 }
