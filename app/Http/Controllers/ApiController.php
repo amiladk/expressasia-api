@@ -97,9 +97,9 @@ class ApiController extends DataController
 
             DB::beginTransaction();
 
-            if($client->auto_waybill==1){
-                $this->updateStartingWaybill($client);
-            }
+            // if($client->auto_waybill==1){
+            //     $this->updateStartingWaybill($client);
+            // }
 
             $initialDeliveryCharge = $this->getInitialDeliveryCharge($client->id,$city->shipping_zone,1);
             //return  $initialDeliveryCharge;
@@ -830,7 +830,7 @@ class ApiController extends DataController
 
         $formatednumber = sprintf('%06d', $starting_waybill);
         $waybill = $waybill_prefix.$formatednumber;
-        //$client->increment('starting_waybill');
+        $client->increment('starting_waybill');
 
         return $waybill;
     }
