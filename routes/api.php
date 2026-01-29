@@ -28,6 +28,38 @@ Route::group([
 ], function ($router) { 
 
     /****************************************************************************************
+    *  API Client Signup - Register new clients via API
+    *
+    *  Required Header: 
+    *          - X-Master-API-Key: Master API key for authorization
+    *
+    *  Required params:
+    *          - name: Business name (unique)
+    *          - username: Username for login (unique)
+    *          - password: Account password (min 6 characters)
+    *          - pickup_address: Pickup address
+    *          - pickup_city: City name (will be converted to city ID)
+    *          - email: Admin email (unique)
+    *          - email_two: Delivery notification email
+    *          - phone_one: Admin phone number
+    *          - phone_two: Delivery phone number
+    *          - payment_cycle: Payment cycle ID (1=7Days, 2=30Days, 3=Daily, 4=14Days)
+    *          - account_name: Bank account holder name
+    *          - account_number: Bank account number
+    *          - bank_id: Bank ID from bank table
+    *          - bank_branch: Bank branch name
+    *          - branch_code: Bank branch code
+    *
+    *  Rate Limiting: Maximum 10 signups per IP address per day
+    *
+    *  Response: Returns client_id, username, and generated api_key
+    *
+    *  Usage: Register new clients programmatically for multi-account scenarios
+    /****************************************************************************************/
+    Route::post('/client-signup', 'ApiController@apiClientSignup');
+
+
+    /****************************************************************************************
     *  User Create Package.
     *
     *  Required param - NO
@@ -111,4 +143,3 @@ Route::group([
 
     
 });
-

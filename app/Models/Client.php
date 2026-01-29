@@ -39,6 +39,10 @@ protected $fillable = [
     'payment_cycle',
     'cash_handling_rate',
     'sales_person',
+    'auto_waybill',
+    'waybill_prefix',
+    'starting_waybill',
+    'ending_waybill',
     'api_key'
 ];
 

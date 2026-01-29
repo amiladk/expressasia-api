@@ -28,6 +28,7 @@ class Package extends Model
         'recipient',
         'address',
         'cod',
+        'external_commission',
         'delivery_charge',
         'client_remarks',
         'courier_remarks',

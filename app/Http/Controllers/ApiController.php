@@ -6,6 +6,8 @@ use Illuminate\Http\Request;
 use Validator;
 use Illuminate\Support\Facades\DB;
 use Mail; 
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Str;
 
 //models
 use App\Models\User;
@@ -18,16 +20,261 @@ use App\Models\PackageType;
 use App\Models\PackagePhone;
 use App\Models\PackageHistory;
 use App\Models\DifferentPickupAddress;
+use App\Models\BankAccount;
 use App\Models\ClientPricing;
+use App\Models\ShippingZone;
 use App\Models\ClientSettlementBatch;
 use App\Models\ClientSettlementItem;
 
 class ApiController extends DataController
 {
-  
+    // Master API key for signup authorization (hardcoded for security)
+    private const MASTER_SIGNUP_API_KEY = 'EA-MASTER-KEY-9c87f4e8-3725-4744-89d0-f1b56d43dd55';
+    
+    // Rate limiting constants
+    private const MAX_SIGNUPS_PER_DAY_PER_IP = 10;
+    private const RATE_LIMIT_CACHE_PREFIX = 'api_signup_rate_limit:';
+    
     /*
     |--------------------------------------------------------------------------
-    |Public function / Create Packge 
+    | Public function / API Client Signup
+    |--------------------------------------------------------------------------
+    */
+    public function apiClientSignup(Request $request){
+
+        try {
+            // Step 1: Validate Master API Key
+            if($request->header('X-Master-API-Key') !== self::MASTER_SIGNUP_API_KEY) {
+                return response([
+                    'success' => false,
+                    'data'    => null,
+                    'message' => 'Unauthorized: Invalid master API key'
+                ], 401);
+            }
+
+            // Step 2: Rate Limiting Check
+            $clientIp = $request->ip();
+            $rateLimitKey = self::RATE_LIMIT_CACHE_PREFIX . $clientIp;
+            $signupCount = Cache::get($rateLimitKey, 0);
+            
+            if($signupCount >= self::MAX_SIGNUPS_PER_DAY_PER_IP) {
+                return response([
+                    'success' => false,
+                    'data'    => null,
+                    'message' => 'Rate limit exceeded: Maximum ' . self::MAX_SIGNUPS_PER_DAY_PER_IP . ' signups per day allowed from your IP address'
+                ], 429);
+            }
+
+            // Step 3: Validate City Name and Get City ID
+            $city = null;
+            if($request->has('pickup_city')) {
+                $city = City::where('city', $request->pickup_city)->first();
+                if($city) {
+                    $request->merge(['pickup_city' => $city->id]);
+                } else {
+                    return response([
+                        'success' => false,
+                        'data'    => null,
+                        'message' => 'Invalid city name provided'
+                    ], 200);
+                }
+            }
+
+            // Step 4: Validation Rules
+            $validation_array = [
+                'name'                  => 'required|string|max:255|unique:client,name',
+                'username'              => 'required|string|max:255|unique:client,username',
+                'password'              => 'required|string|min:6',
+                'pickup_address'        => 'required|string|max:500',
+                'pickup_city'           => 'required|exists:city,id',
+                'email'                 => 'required|email|max:255|unique:client,email',
+                'email_two'             => 'required|email|max:255',
+                'phone_one'             => 'required|numeric|min:10',
+                'phone_two'             => 'required|numeric|min:10',
+                'payment_cycle'         => 'required|integer|in:1,2,3,4',
+                // Bank account fields
+                'account_name'          => 'required|string|max:255',
+                'account_number'        => 'required|string|max:50',
+                'bank_id'               => 'required|exists:bank,id',
+                'bank_branch'           => 'required|string|max:255',
+                'branch_code'           => 'required|string|max:20',
+            ];
+
+            $customMessages = [
+                'name.required'         => 'Business name is required',
+                'name.unique'           => 'Business name already exists',
+                'username.required'     => 'Username is required',
+                'username.unique'       => 'Username already exists',
+                'password.required'     => 'Password is required',
+                'password.min'          => 'Password must be at least 6 characters',
+                'pickup_city.required'  => 'Pickup city is required',
+                'pickup_city.exists'    => 'Invalid pickup city',
+                'email.unique'          => 'Email already exists',
+                'payment_cycle.in'      => 'Invalid payment cycle. Valid values: 1 (7 Days), 2 (30 Days), 3 (Daily), 4 (14 Days)',
+                'bank_id.exists'        => 'Invalid bank selected'
+            ];
+
+            $validator = Validator::make($request->all(), $validation_array, $customMessages);
+
+            if($validator->fails()){
+                return response([
+                    'success' => false,
+                    'data'    => null,
+                    'message' => implode(" / ", $validator->messages()->all())
+                ], 200);
+            }
+
+            DB::beginTransaction();
+
+            // Step 5: Create Bank Account
+            $bankData = array(
+                'account_name'   => $request->account_name,
+                'account_number' => $request->account_number,
+                'bank_id'        => $request->bank_id,
+                'bank_branch'    => $request->bank_branch,
+                'branch_code'    => $request->branch_code
+            );
+            $bank_account_id = BankAccount::insertGetId($bankData);
+
+            // Step 6: Generate Unique API Key
+            $api_key = $this->generateUniqueApiKey();
+
+            // Step 7: Generate Auto Waybill Settings
+            $waybillSettings = $this->generateWaybillSettings();
+
+            // Step 8: Create Client
+            $clientData = [
+                'name'                  => $request->name,
+                'username'              => $request->username,
+                'password'              => bcrypt($request->password),
+                'pickup_address'        => $request->pickup_address,
+                'pickup_city'           => $request->pickup_city,
+                'email'                 => $request->email,
+                'email_two'             => $request->email_two,
+                'phone_one'             => $request->phone_one,
+                'phone_two'             => $request->phone_two,
+                'payment_cycle'         => $request->payment_cycle,
+                'bank_account'          => $bank_account_id,
+                'api_key'               => $api_key,
+                'is_active'             => 0, // Requires admin approval
+                'auto_waybill'          => 1,
+                'waybill_prefix'        => $waybillSettings['prefix'],
+                'starting_waybill'      => $waybillSettings['starting'],
+                'ending_waybill'        => $waybillSettings['ending'],
+                'cash_handling_rate'    => 0, // Default value, admin can update
+            ];
+
+            $client = Client::create($clientData);
+
+            // Step 9: Insert Client Pricing (default pricing based on shipping zones)
+            $this->insertClientPricing($client->id);
+
+            // Step 10: Increment Rate Limit Counter
+            $expiresAt = now()->endOfDay(); // Reset at end of day
+            Cache::put($rateLimitKey, $signupCount + 1, $expiresAt);
+
+            DB::commit();
+
+            // Step 11: Return Response
+            $response = array(
+                'client_id' => $client->id,
+                'username'  => $client->username,
+                'api_key'   => $client->api_key
+            );
+
+            return response([
+                'success' => true,
+                'data'    => $response,
+                'message' => 'Client signup successful! Account is pending admin approval.'
+            ], 200);
+
+        }
+        catch (\Throwable $e){
+            DB::rollback();
+            
+            return response([
+                'success' => false,
+                'data'    => null,
+                'message' => 'Oops! Something went wrong. Please try again later.'
+            ], 200);
+        }
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Private function / Generate Unique API Key
+    |--------------------------------------------------------------------------
+    */
+    private function generateUniqueApiKey(){
+        do {
+            // Generate UUID v4 format API key
+            $api_key = Str::uuid()->toString();
+            
+            // Check if it already exists
+            $exists = Client::where('api_key', $api_key)->exists();
+            
+        } while($exists);
+        
+        return $api_key;
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Private function / Generate Waybill Settings
+    |--------------------------------------------------------------------------
+    */
+    private function generateWaybillSettings(){
+        // Find the highest existing API prefix number
+        $lastApiClient = Client::where('waybill_prefix', 'LIKE', 'API%')
+                              ->orderBy('waybill_prefix', 'DESC')
+                              ->first();
+        
+        $nextNumber = 1;
+        if($lastApiClient) {
+            // Extract number from prefix (e.g., "API5" -> 5)
+            preg_match('/API(\d+)/', $lastApiClient->waybill_prefix, $matches);
+            if(isset($matches[1])) {
+                $nextNumber = (int)$matches[1] + 1;
+            }
+        }
+        
+        return [
+            'prefix'   => 'API' . $nextNumber,
+            'starting' => 1,
+            'ending'   => 100000
+        ];
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Private function / Insert Client Pricing
+    |--------------------------------------------------------------------------
+    */
+    private function insertClientPricing($client_id){
+        $shipping_zones = ShippingZone::all();
+        
+        $clientPricing = array();
+        
+        foreach($shipping_zones as $key => $zone){
+            $clientPricing[$key] = array(
+                'client'                            => $client_id,
+                'shipping_zone'                     => $zone->id,
+                'delivery_charge'                   => $zone->default_delivery_charge,
+                'delivery_charge_for_additional_kg' => $zone->default_charge_for_additional_kg,
+                'return_charge'                     => $zone->default_return_charge,
+                'return_charge_for_additional_kg'   => $zone->default_return_charge_for_additional_kg,
+            );
+        }
+        
+        ClientPricing::insert($clientPricing);
+        
+        return;
+    }
+
+    
+    /*
+    |--------------------------------------------------------------------------
+    |Public function / Create Package 
     |--------------------------------------------------------------------------
     */
     public function createPackge(Request $request){
@@ -74,6 +321,7 @@ class ApiController extends DataController
                 'recipient'        => 'required',
                 'address'          => 'required',
                 'cod'              => 'required|numeric',
+                'external_commission'=> 'nullable|numeric',
                 'package_type'     => 'required',
                 'client_remarks'   => 'nullable',
                 // 'weight'           => 'required|numeric|not_in:0',
@@ -286,7 +534,6 @@ class ApiController extends DataController
         }
         catch (\Throwable $e){
             // For public endpoint, we don't have client info for error email, so we'll log differently
-            // You might want to log this error to your application logs instead
             \Log::error('Public Package Tracking Error: ' . $e->getMessage(), [
                 'line' => $e->getLine(),
                 'function' => __FUNCTION__,
