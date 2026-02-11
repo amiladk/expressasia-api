@@ -25,6 +25,7 @@ use App\Models\ClientPricing;
 use App\Models\ShippingZone;
 use App\Models\ClientSettlementBatch;
 use App\Models\ClientSettlementItem;
+use App\Models\PartialProcessingData;
 
 class ApiController extends DataController
 {
@@ -34,6 +35,9 @@ class ApiController extends DataController
     // Rate limiting constants
     private const MAX_SIGNUPS_PER_DAY_PER_IP = 10;
     private const RATE_LIMIT_CACHE_PREFIX = 'api_signup_rate_limit:';
+
+    // Partial city ID
+    private const PARTIAL_CITY_ID = 2798;
     
     /*
     |--------------------------------------------------------------------------
@@ -300,10 +304,19 @@ class ApiController extends DataController
             }
 
             $city = City::has('BranchCoverage')->where('city',$request->city)->first();
+            $partialCityPackage = false;
+            $originalCityValue = $request->city;
             if($city){
                 $request->merge(['city' => $city->id]);
             }else{
-                $request->merge(['city' => NULL]);
+                if ($client->allow_partial_processing) {
+                    // For partial processing, set city to Partial City
+                    $request->merge(['city' => self::PARTIAL_CITY_ID]);
+                    $city = City::find(self::PARTIAL_CITY_ID);
+                    $partialCityPackage = true;
+                }else{
+                    $request->merge(['city' => NULL]);
+                }
             }
             
             $packageType = PackageType::where('package_type',$request->package_type)->first();
@@ -353,17 +366,31 @@ class ApiController extends DataController
             //return  $initialDeliveryCharge;
             $package = Package::create(array_merge(
                 $validator->validated(),
-                ['status' => 1,
+                ['status' => $partialCityPackage ? 24 : 1, //if city incomplete "Partial Processing" else "Processing",
                 'client' => $client->id,
                 'delivery_charge'=> $initialDeliveryCharge],
                 ['weight' => 1],
                 ['cod' => $request->package_type == 3 ? $initialDeliveryCharge :  ($request->package_type == 2 ? 0 : $request->cod)]
             ));
 
+            // Store partial processing data if city was invalid
+            if ($partialCityPackage) {
+                PartialProcessingData::create([
+                    'package_id' => $package->id,
+                    'field_name' => 'city',
+                    'provided_value' => $originalCityValue
+                ]);
+            }
+
             $valid = $validator->valid();
 
             $this->addPackagePhone($valid['phone'],$package->id);
-            $this->updatePackageHistory($package->id,1,'user_created','client',$client->id,'Delivery Request Created');
+
+            if ($partialCityPackage) {
+                $this->updatePackageHistory($package->id,24,'user_created','client',$client->id,'Delivery Request Created with Partial City');
+            }else{
+                $this->updatePackageHistory($package->id,1,'user_created','client',$client->id,'Delivery Request Created');
+            }
 
             DB::commit();
 
