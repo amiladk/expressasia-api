@@ -141,5 +141,15 @@ Route::group([
     /****************************************************************************************/
     Route::get('/get-client-invoice-items', 'ApiController@getClientSettlementBatchItems');
 
+    /****************************************************************************************
+    *  Create Pickup Request
+    *
+    *  Required param - api_key
+    *                 - remarks
+    *
+    *  Usage - Create a pickup request for the client. Only one pickup request allowed per day.
+    /****************************************************************************************/
+    Route::post('/create-pickup-request', 'ApiController@createPickupRequest');
+
     
 });

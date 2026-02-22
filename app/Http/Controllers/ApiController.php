@@ -26,6 +26,7 @@ use App\Models\ShippingZone;
 use App\Models\ClientSettlementBatch;
 use App\Models\ClientSettlementItem;
 use App\Models\PartialProcessingData;
+use App\Models\PickupRequest;
 
 class ApiController extends DataController
 {
@@ -966,6 +967,86 @@ class ApiController extends DataController
             return response(['success' => false,
                             'data'    => null,
                             'message' => 'Oops! Something went wrong please try again later'], 200);
+        }
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Public function / Create Pickup Request
+    |--------------------------------------------------------------------------
+    */
+    public function createPickupRequest(Request $request){
+
+        try {
+
+            $client = Client::where('api_key', $request->api_key)->first();
+
+            if($client){
+                $request->merge(['api_key' => $client->api_key]);
+            }else{
+                $request->merge(['api_key' => NULL]);
+            }
+
+            $validation_array = [
+                'api_key' => 'required',
+                'remarks' => 'required|string|max:255',
+            ];
+
+            $customMessages = [
+                'api_key.required' => 'Unauthorized access, invalid api key',
+                'remarks.required' => 'Remarks are required',
+            ];
+
+            $validator = Validator::make($request->all(), $validation_array, $customMessages);
+
+            if($validator->fails()){
+                return response(['success' => false, 'data' => null, 'message' => implode(" / ", $validator->messages()->all())], 200);
+            }
+
+            // Check if a pickup request already exists for this client today
+            $existingRequest = PickupRequest::where('client', $client->id)
+                                ->whereDate('create_date', now()->toDateString())
+                                ->first();
+
+            if($existingRequest){
+                return response([
+                    'success' => false,
+                    'data'    => ['pickup_request_id' => $existingRequest->id],
+                    'message' => 'A pickup request has already been created for today.'
+                ], 200);
+            }
+
+            // Generate OTP
+            $otp = str_pad(rand(0, 9999), 4, '0', STR_PAD_LEFT);
+
+            DB::beginTransaction();
+
+            $pickupRequest = PickupRequest::create([
+                'client'       => $client->id,
+                'vehicle_type' => 1,
+                'remarks'      => $request->remarks,
+                'otp'          => $otp,
+            ]);
+
+            DB::commit();
+
+            return response([
+                'success' => true,
+                'data'    => [
+                    'pickup_request_id' => $pickupRequest->id,
+                    'otp'               => $pickupRequest->otp,
+                ],
+                'message' => 'Pickup request created successfully!'
+            ], 200);
+
+        }
+        catch (\Throwable $e){
+            DB::rollback();
+            return response([
+                'success' => false,
+                'data'    => null,
+                'message' => 'Oops! Something went wrong please try again later'
+            ], 200);
         }
     }
 
