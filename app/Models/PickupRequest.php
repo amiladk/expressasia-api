@@ -19,8 +19,14 @@ class PickupRequest extends Model
         'client',
         'vehicle_type',
         'remarks',
-        'create_date'
+        'create_date',
+        'pickup_quantity',
+        'otp',
+        'assigned_rider'
     ];
+
+    const UPDATED_AT = null;
+    const CREATED_AT = null;
 
 
     /**
@@ -43,6 +49,11 @@ class PickupRequest extends Model
     public function rider()
     {
         return $this->hasOne(Rider::class,'id','assigned_rider');
+    }
+
+    public function vehicle()
+    {
+        return $this->hasOne(VehicleType::class,'id','vehicle_type');
     }
 
 
